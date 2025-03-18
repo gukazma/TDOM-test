@@ -33,6 +33,7 @@
 #include <fstream>
 #include <queue>
 #include <tiny_obj_loader.h>
+#include <filesystem>
 // Visitor base
 #include <CGAL/Surface_mesh_simplification/Edge_collapse_visitor_base.h>
 
@@ -213,8 +214,8 @@ typedef SMS::Constrained_placement<SMS::Midpoint_placement<Mesh>, Border_is_cons
 int main(int argc, char **argv)
 {
     Mesh mesh;
-
-    CGAL::Polygon_mesh_processing::IO::read_polygon_mesh("D:/Tile_+000_+000.obj", mesh);
+    std::string filename = argv[1];
+    CGAL::Polygon_mesh_processing::IO::read_polygon_mesh(filename, mesh);
     //CGAL::Polygon_mesh_processing::IO::read_polygon_mesh("D:/cube.obj", mesh);
 
 
@@ -226,7 +227,7 @@ int main(int argc, char **argv)
     auto face_lenghs = mesh.add_property_map<Mesh::Face_index, double>("f:lengths", 0.0).first;
     std::vector<double> lengths;
     lengths.reserve(mesh.number_of_faces());
-    CGAL::IO::write_OBJ("D:/www.obj", mesh);
+    //CGAL::IO::write_OBJ("D:/www.obj", mesh);
     Vector_3 up = {0.0, 0.0, 1.0};
     double maxLength = std::numeric_limits<double>::min();
     for (auto f : mesh.faces())
@@ -280,7 +281,15 @@ int main(int argc, char **argv)
                                CGAL::parameters::get_cost(cost).get_placement(SMS::Midpoint_placement<Mesh>()));
 
     mesh.collect_garbage();
-    CGAL::IO::write_OBJ("D:/www2.obj", mesh);
+    std::filesystem::path outputFilename = filename;
+    std::filesystem::path outputDir = outputFilename.parent_path() / "output";
+    if (!std::filesystem::exists(outputDir))
+    {
+        std::filesystem::create_directories(outputDir);
+    }
+    outputFilename = outputDir / outputFilename.filename();
+
+    CGAL::IO::write_OBJ(outputFilename.generic_string(), mesh);
 
     return EXIT_SUCCESS;
 }
