@@ -213,83 +213,100 @@ typedef SMS::Constrained_placement<SMS::Midpoint_placement<Mesh>, Border_is_cons
 
 int main(int argc, char **argv)
 {
-    Mesh mesh;
-    std::string filename = argv[1];
-    CGAL::Polygon_mesh_processing::IO::read_polygon_mesh(filename, mesh);
-    //CGAL::Polygon_mesh_processing::IO::read_polygon_mesh("D:/cube.obj", mesh);
-
-
-    //std::cout << mesh.number_of_faces() << std::endl;
-    //std::cout << mesh.number_of_vertices() << std::endl;
-    auto face_normals = mesh.add_property_map<Mesh::Face_index, Vector_3>("f:normals", CGAL::NULL_VECTOR).first;
-    //CGAL::Polygon_mesh_processing::calculate_face_normals
-    CGAL::Polygon_mesh_processing::compute_face_normals(mesh, face_normals);
-    auto face_lenghs = mesh.add_property_map<Mesh::Face_index, double>("f:lengths", 0.0).first;
-    std::vector<double> lengths;
-    lengths.reserve(mesh.number_of_faces());
-    //CGAL::IO::write_OBJ("D:/www.obj", mesh);
-    Vector_3 up = {0.0, 0.0, 1.0};
-    double maxLength = std::numeric_limits<double>::min();
-    for (auto f : mesh.faces())
+    if (argc < 3)
     {
-        auto fbox = CGAL::Polygon_mesh_processing::face_bbox(f, mesh);
-
-        double face_lengh = std::abs(fbox.zmax() - fbox.zmin());
-        face_lenghs[f] = face_lengh;
-        lengths.push_back(face_lenghs[f]);
-        if (maxLength < face_lengh)
-        {
-            maxLength = face_lengh;
-        }
+        std::cout << "Simplify.exe arg1 arg2";
+        std::cout << "arg1: root dir";
+        std::cout << "arg2: min length";
+        return 0;
     }
-
-    Mesh::Halfedge_index hf = *mesh.halfedges_begin();
-
-    for (auto f : mesh.faces())
+    std::filesystem::path rootDir = argv[1];
+    double minlength = std::stod(argv[2]);
+    for (auto& fe : std::filesystem::directory_iterator(rootDir))
     {
-        Vector_3 normal = face_normals[f];
-        auto length = face_lenghs[f];
-        double degree = std::acos(std::abs(normal * up)) * 180.0 / 3.1415926;
-        if (degree > 60.0 && degree < 120.0 && length > maxLength / 5.0)
+        if (std::filesystem::is_directory(fe.path()))
         {
-            face_tomerge.push_back(f);
+            continue;
         }
-        else
+        Mesh mesh;
+        auto fp = fe.path();
+        std::string filename = fp.generic_string();
+        std::cout << "simplify " << filename << std::endl;
+        CGAL::Polygon_mesh_processing::IO::read_polygon_mesh(filename, mesh);
+        // CGAL::Polygon_mesh_processing::IO::read_polygon_mesh("D:/cube.obj", mesh);
+
+        // std::cout << mesh.number_of_faces() << std::endl;
+        // std::cout << mesh.number_of_vertices() << std::endl;
+        auto face_normals = mesh.add_property_map<Mesh::Face_index, Vector_3>("f:normals", CGAL::NULL_VECTOR).first;
+        // CGAL::Polygon_mesh_processing::calculate_face_normals
+        CGAL::Polygon_mesh_processing::compute_face_normals(mesh, face_normals);
+        auto face_lenghs = mesh.add_property_map<Mesh::Face_index, double>("f:lengths", 0.0).first;
+        std::vector<double> lengths;
+        lengths.reserve(mesh.number_of_faces());
+        // CGAL::IO::write_OBJ("D:/www.obj", mesh);
+        Vector_3 up = {0.0, 0.0, 1.0};
+        double maxLength = std::numeric_limits<double>::min();
+        for (auto f : mesh.faces())
         {
+            auto fbox = CGAL::Polygon_mesh_processing::face_bbox(f, mesh);
+
+            double face_lengh = std::abs(fbox.zmax() - fbox.zmin());
+            face_lenghs[f] = face_lengh;
+            lengths.push_back(face_lenghs[f]);
+            if (maxLength < face_lengh)
+            {
+                maxLength = face_lengh;
+            }
         }
+
+        Mesh::Halfedge_index hf = *mesh.halfedges_begin();
+
+        for (auto f : mesh.faces())
+        {
+            Vector_3 normal = face_normals[f];
+            auto length = face_lenghs[f];
+            double degree = std::acos(std::abs(normal * up)) * 180.0 / 3.1415926;
+            if (degree > 60.0 && degree < 120.0 && length > maxLength / 5.0)
+            {
+                face_tomerge.push_back(f);
+            }
+            else
+            {
+            }
+        }
+
+        // Edge_count_stop_custom stop;
+        SMS::Edge_length_stop_predicate<double> stop(minlength);
+        // SMS::Edge_length_cost<Mesh>();
+        Border_is_constrained_edge_map bem(mesh);
+        Stats stats;
+        My_visitor vis(&stats);
+        vis.sm_ptr = &mesh;
+        // This the actual call to the simplification algorithm.
+        // The surface mesh and stop conditions are mandatory arguments.
+        // The index maps are needed because the vertices and edges
+        // of this surface mesh lack an "id()" field.
+        SMS::Edge_length_cost<Mesh>();
+        Edge_custom_cost<Mesh> cost;
+        cost.sm_ptr = &mesh;
+        /*int r = SMS::edge_collapse(mesh, stop,
+                                   CGAL::parameters::edge_is_constrained_map(bem)
+                                       .get_placement(Placement(bem)));*/
+        int r = SMS::edge_collapse(mesh, stop,
+                                   CGAL::parameters::get_cost(cost).get_placement(SMS::Midpoint_placement<Mesh>()));
+
+        mesh.collect_garbage();
+        std::filesystem::path outputFilename = filename;
+        std::filesystem::path outputDir = outputFilename.parent_path() / "output";
+        if (!std::filesystem::exists(outputDir))
+        {
+            std::filesystem::create_directories(outputDir);
+        }
+        outputFilename = outputDir / outputFilename.filename();
+
+        CGAL::IO::write_OBJ(outputFilename.generic_string(), mesh);
+        std::cout << "complete" << std::endl;
     }
-
-    //Edge_count_stop_custom stop;
-    SMS::Edge_length_stop_predicate<double> stop(2.0);
-    //SMS::Edge_length_cost<Mesh>();
-    Border_is_constrained_edge_map bem(mesh);
-    Stats stats;
-    My_visitor vis(&stats);
-    vis.sm_ptr = &mesh;
-    // This the actual call to the simplification algorithm.
-    // The surface mesh and stop conditions are mandatory arguments.
-    // The index maps are needed because the vertices and edges
-    // of this surface mesh lack an "id()" field.
-    SMS::Edge_length_cost<Mesh>();
-    Edge_custom_cost<Mesh> cost;
-    cost.sm_ptr = &mesh;
-    /*int r = SMS::edge_collapse(mesh, stop,
-                               CGAL::parameters::edge_is_constrained_map(bem)
-                                   .get_placement(Placement(bem)));*/
-    int r =
-        SMS::edge_collapse(mesh, stop,
-                               CGAL::parameters::get_cost(cost).get_placement(SMS::Midpoint_placement<Mesh>()));
-
-    mesh.collect_garbage();
-    std::filesystem::path outputFilename = filename;
-    std::filesystem::path outputDir = outputFilename.parent_path() / "output";
-    if (!std::filesystem::exists(outputDir))
-    {
-        std::filesystem::create_directories(outputDir);
-    }
-    outputFilename = outputDir / outputFilename.filename();
-
-    CGAL::IO::write_OBJ(outputFilename.generic_string(), mesh);
 
     return EXIT_SUCCESS;
 }
