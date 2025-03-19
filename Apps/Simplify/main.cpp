@@ -36,7 +36,10 @@
 #include <filesystem>
 // Visitor base
 #include <CGAL/Surface_mesh_simplification/Edge_collapse_visitor_base.h>
-
+#include <CGAL/Surface_mesh_simplification/Policies/Edge_collapse/Edge_profile.h>
+#include <CGAL/Surface_mesh_simplification/Policies/Edge_collapse/LindstromTurk_placement.h>
+#include <CGAL/Surface_mesh_simplification/Policies/Edge_collapse/Bounded_distance_placement.h>
+double minlength;
 double maxLength = std::numeric_limits<double>::min();
 namespace SMS = CGAL::Surface_mesh_simplification;
 using Kernel = CGAL::Simple_cartesian<double>;
@@ -65,9 +68,10 @@ class Edge_custom_cost
     Edge_custom_cost()
     {
     }
+    typedef SMS::Edge_profile<Mesh> Profile;
 
-    template <typename Profile, typename T>
-    std::optional<typename Profile::FT> operator()(const Profile &profile, const T & /*placement*/) const
+    std::optional<typename Profile::FT> operator()(const Profile &profile,
+                                                   const std::optional<Mesh::Point>& /*placement*/) const
     {
 
         typedef std::optional<typename Profile::FT> result_type;
@@ -79,10 +83,10 @@ class Edge_custom_cost
         auto face1 = sm_ptr->face(hf1);
         if (!is_valid_face_descriptor(face0, *sm_ptr) || !is_valid_face_descriptor(face1, *sm_ptr))
         {
-            rnt *= 100.0;
+            rnt = 100.0;
             return result_type(rnt);
         }
-
+        
         Vector_3 normal0, normal1;
         normal0 = CGAL::Polygon_mesh_processing::compute_face_normal(face0, *sm_ptr);
         normal1 = CGAL::Polygon_mesh_processing::compute_face_normal(face1, *sm_ptr);
@@ -97,9 +101,14 @@ class Edge_custom_cost
         if ((degree0 > 60.0 && degree0 < 120.0 && face_lengh0 > maxLength / 5.0) ||
             (degree1 > 60.0 && degree1 < 120.0 && face_lengh1 > maxLength / 5.0))
         {
+            /*if (face_lengh0 > 2.0 && face_lengh1 > 2.0)
+            {
+                rnt = 100.0;
+            }*/
             return result_type(rnt);
         }
-        rnt *= 100.0;
+
+        rnt = 100.0;
         return result_type(rnt);
     }
 };
@@ -117,13 +126,54 @@ class Edge_count_stop_custom
     bool operator()(const F & current_cost, const Profile & profile, std::size_t /*initial_edge_count*/,
                     std::size_t current_edge_count) const
     {
-        return current_cost == 100.0;
+        return current_cost > minlength;
     }
 
   private:
     std::size_t m_edge_count_threshold;
 };
+class My_placement
+{
+  public:
 
+    My_placement()
+    {
+    }
+    typedef SMS::Edge_profile<Mesh> Profile;
+    std::optional<Profile::Point> operator()(const Profile &profile) const
+    {
+        typedef std::optional<typename Profile::Point> result_type;
+        auto& mesh = profile.surface_mesh();
+        
+        auto face0 = mesh.face(profile.v0_v1());
+        auto face1 = mesh.face(profile.v1_v0());
+        if (!is_valid_face_descriptor(face0, mesh) || !is_valid_face_descriptor(face1, mesh))
+        {
+            return result_type(profile.geom_traits().construct_midpoint_3_object()(profile.p0(), profile.p1()));
+        }
+        Vector_3 normal0, normal1;
+        normal0 = CGAL::Polygon_mesh_processing::compute_face_normal(face0, mesh);
+        normal1 = CGAL::Polygon_mesh_processing::compute_face_normal(face1, mesh);
+
+        double degree0 = std::acos(std::abs(normal0 * up)) * 180.0 / 3.1415926;
+        double degree1 = std::acos(std::abs(normal1 * up)) * 180.0 / 3.1415926;
+        //Mesh::face_index targetFace;
+        Vector_3 targetNormal;
+        if (degree0 > 60.0 && degree0 < 120.0)
+        {
+            targetNormal = normal0;
+        }
+        else
+        {
+            targetNormal = normal1;
+        }
+        auto midpoint = profile.geom_traits().construct_midpoint_3_object()(profile.p0(), profile.p1());
+        midpoint += targetNormal*0.1;
+        //Profile::Point rnt = halfedgesV0.size() > halfedgesV1.size() ? profile.p1() : profile.p0();
+
+        return result_type(midpoint);
+    }
+};
 // BGL property map which indicates whether an edge is marked as non-removable
 struct Border_is_constrained_edge_map
 {
@@ -221,7 +271,7 @@ int main(int argc, char **argv)
         return 0;
     }
     std::filesystem::path rootDir = argv[1];
-    double minlength = std::stod(argv[2]);
+    minlength = std::stod(argv[2]);
     for (auto& fe : std::filesystem::directory_iterator(rootDir))
     {
         if (std::filesystem::is_directory(fe.path()))
@@ -275,8 +325,8 @@ int main(int argc, char **argv)
             }
         }
 
-        // Edge_count_stop_custom stop;
-        SMS::Edge_length_stop_predicate<double> stop(minlength);
+        Edge_count_stop_custom stop;
+        //SMS::Edge_length_stop_predicate<double> stop(minlength);
         // SMS::Edge_length_cost<Mesh>();
         Border_is_constrained_edge_map bem(mesh);
         Stats stats;
@@ -292,8 +342,9 @@ int main(int argc, char **argv)
         /*int r = SMS::edge_collapse(mesh, stop,
                                    CGAL::parameters::edge_is_constrained_map(bem)
                                        .get_placement(Placement(bem)));*/
-        int r = SMS::edge_collapse(mesh, stop,
-                                   CGAL::parameters::get_cost(cost).get_placement(SMS::Midpoint_placement<Mesh>()));
+        int r = SMS::edge_collapse(
+            mesh, stop,
+            CGAL::parameters::get_cost(cost).get_placement(/*SMS::Midpoint_placement<Mesh>()*/ My_placement()));
 
         mesh.collect_garbage();
         std::filesystem::path outputFilename = filename;
